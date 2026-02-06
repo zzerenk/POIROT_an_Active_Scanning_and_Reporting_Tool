@@ -1,5 +1,16 @@
 import os
+from dotenv import load_dotenv
+
+basedir = os.path.abspath(os.path.dirname(__file__))
+load_dotenv(os.path.join(basedir, '.env'))
 
 class Config:
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'poirot-cok-gizli-anahtar'
-    # Veritabanı bağlantısı
+    SECRET_KEY = os.environ.get('SECRET_KEY') or 'varsayilan-guvensiz-anahtar'
+    
+    # Veritabanı bağlantı adresi
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')
+    
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # Veritabanı bağlantısını debug etmek için (Gerekirse True yapabilirsin)
+    # SQLALCHEMY_ECHO = True
