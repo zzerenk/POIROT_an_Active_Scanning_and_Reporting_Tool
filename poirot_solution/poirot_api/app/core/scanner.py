@@ -38,6 +38,8 @@ class NmapScanner:
             if options.get('speed') == 'aggressive':
                 args.append("-T4") # Hızlı Mod
                 args.append("--min-rate 1000")
+            if options.get('subdomainScan'):
+                args.append("--script dns-brute")
                 
             # Listeyi string'e çevir (Örn: "-Pn -sV -O -T4")
             arguments_str = " ".join(args)
@@ -110,6 +112,43 @@ class NmapScanner:
                                         })
 
                                 summary['vulnerabilities'].append(vuln_entry)
+
+                # 3. SUBDOMAIN DISCOVERY PARSING (CRITICAL ADDITION)
+                # dns-brute results are in 'hostscript', NOT in 'tcp'
+                summary['subdomains'] = []
+                
+                if 'hostscript' in raw_data:
+                    try:
+                        for script in raw_data['hostscript']:
+                            if script.get('id') == 'dns-brute':
+                                output = script.get('output', '')
+                                # Parse each line: format is usually "subdomain.domain.com - IP.ADDRESS"
+                                lines = output.strip().split('\n')
+                                for line in lines:
+                                    line = line.strip()
+                                    
+                                    # Filter out header/description lines
+                                    # Only process lines with " - " (space hyphen space)
+                                    if line and ' - ' in line:
+                                        # Ignore header lines that start with "DNS Brute" or contain "force"
+                                        if line.startswith('DNS Brute') or line.startswith('force'):
+                                            continue
+                                        
+                                        # Match pattern: subdomain - IP
+                                        parts = line.split(' - ', 1)
+                                        if len(parts) == 2:
+                                            subdomain = parts[0].strip()
+                                            ip = parts[1].strip()
+                                            
+                                            # Validate: subdomain must contain a dot to be valid
+                                            if '.' in subdomain:
+                                                summary['subdomains'].append({
+                                                    'domain': subdomain,
+                                                    'ip': ip
+                                                })
+                    except Exception as e:
+                        print(f"⚠️ Subdomain parsing error: {e}")
+                        # Continue execution even if subdomain parsing fails
 
                 return summary
 

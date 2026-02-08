@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
             serviceVersion: document.getElementById('optSv').checked,
             detectOS: document.getElementById('optOs').checked,
             vulnScan: document.getElementById('optVuln').checked,
+            subdomainScan: document.getElementById('optSubdomain') ? document.getElementById('optSubdomain').checked : false,
             speed: document.querySelector('input[name="speedOpt"]:checked').value
         };
 
@@ -40,7 +41,20 @@ document.addEventListener('DOMContentLoaded', () => {
         terminalConsole.innerHTML = '';
         logToTerminal('[SYSTEM] Initializing scan module...', 'info');
         logToTerminal(`[TARGET] ${target}`, 'info');
-        logToTerminal('[CONFIG] Preparing scan parameters...', 'info');
+
+        // Log enabled scan options
+        const enabledOptions = [];
+        if (options.serviceVersion) enabledOptions.push('Service Detection');
+        if (options.detectOS) enabledOptions.push('OS Fingerprinting');
+        if (options.vulnScan) enabledOptions.push('Vulnerability Scanning');
+        if (options.subdomainScan) enabledOptions.push('Subdomain Discovery');
+        if (options.speed === 'aggressive') enabledOptions.push('Aggressive Mode (-T4)');
+
+        if (enabledOptions.length > 0) {
+            logToTerminal(`[CONFIG] Enabled: ${enabledOptions.join(', ')}`, 'info');
+        } else {
+            logToTerminal('[CONFIG] Basic port scan only', 'info');
+        }
 
         try {
             // 1. START REQUEST: Initialize Task
@@ -54,7 +68,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (startData.success) {
                 logToTerminal(`[SUCCESS] Task created: ${startData.task_id.substring(0, 8)}...`, 'success');
-                logToTerminal('[SCANNER] Nmap engine starting...', 'info');
                 // 2. START POLLING: Check every 2 seconds
                 pollStatus(startData.task_id);
             } else {
@@ -68,34 +81,37 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Status Polling Function (UNCHANGED LOGIC)
+    // Status Polling Function - Now uses REAL backend messages
     async function pollStatus(taskId) {
-        let scanPhase = 0;
-        const phases = [
-            '[*] Resolving target hostname...',
-            '[*] Initiating port scan...',
-            '[*] Analyzing open ports...',
-            '[*] Probing service versions...',
-            '[*] Performing OS detection...',
-            '[*] Running vulnerability scripts...',
-            '[*] Compiling scan results...'
-        ];
-
         const intervalId = setInterval(async () => {
             try {
                 const res = await fetch(`/api/status/${taskId}`);
                 const data = await res.json();
 
-                // Log phase progression
-                if (scanPhase < phases.length && data.status === 'running') {
-                    logToTerminal(phases[scanPhase], 'info');
-                    scanPhase++;
+                // Display REAL backend message in terminal
+                if (data.message) {
+                    // Determine message type based on content
+                    let msgType = 'info';
+                    if (data.message.includes('[COMPLETE]') || data.message.includes('[SUCCESS]')) {
+                        msgType = 'success';
+                    } else if (data.message.includes('[ERROR]') || data.message.includes('[FAILED]')) {
+                        msgType = 'error';
+                    } else if (data.message.includes('[NMAP]')) {
+                        msgType = 'info';
+                    } else if (data.message.includes('[PARSER]')) {
+                        msgType = 'warning';
+                    }
+
+                    // Only log new messages (avoid duplicates)
+                    const lastLog = terminalConsole.lastElementChild;
+                    if (!lastLog || lastLog.textContent !== data.message) {
+                        logToTerminal(data.message, msgType);
+                    }
                 }
 
                 // Scan completed
                 if (data.status === 'completed') {
                     clearInterval(intervalId);
-                    logToTerminal('[COMPLETE] Scan finished successfully', 'success');
                     logToTerminal('[RENDER] Generating dashboard...', 'info');
                     renderDashboard(data.result);
                     scanBtn.disabled = false;
@@ -159,7 +175,29 @@ document.addEventListener('DOMContentLoaded', () => {
             portsHtml = '<tr><td colspan="4" style="text-align: center; color: #9ca3af;">No open ports detected</td></tr>';
         }
 
-        // 4. Vulnerabilities with Pagination
+        // 4. Subdomain Discovery Results (Using Backend Parsed Data)
+        let subdomainsHtml = '';
+        let subdomainCount = 0;
+
+        // Backend now provides clean subdomain data in data.subdomains array
+        if (data.subdomains && data.subdomains.length > 0) {
+            data.subdomains.forEach(subdomain => {
+                subdomainCount++;
+                subdomainsHtml += `
+                    <tr>
+                        <td><span class="badge" style="background: #00f2ff; color: #000; font-weight: 600;">${subdomainCount}</span></td>
+                        <td style="font-family: 'Roboto Mono', monospace; font-size: 13px;">${subdomain.domain}</td>
+                        <td style="font-family: 'Roboto Mono', monospace; font-size: 12px; color: #9ca3af;">${subdomain.ip}</td>
+                        <td><span class="badge" style="background: #10b981; color: #000;">DISCOVERED</span></td>
+                    </tr>`;
+            });
+        }
+
+        if (subdomainsHtml === '') {
+            subdomainsHtml = '<tr><td colspan="4" style="text-align: center; color: #9ca3af;">No subdomains discovered or scan not enabled</td></tr>';
+        }
+
+        // 5. Vulnerabilities with Pagination
         const vulnContent = renderVulnerabilities(data.vulnerabilities);
 
         // 5. Main Dashboard HTML
@@ -341,6 +379,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="tabs-container">
                 <div class="tab-header">
                     <button class="tab-button active" data-tab="ports">Port Analysis</button>
+                    <button class="tab-button" data-tab="subdomains">Subdomain Discovery</button>
                     <button class="tab-button" data-tab="vulns">Vulnerabilities</button>
                     <button class="tab-button" data-tab="raw">Raw Data</button>
                 </div>
@@ -357,6 +396,20 @@ document.addEventListener('DOMContentLoaded', () => {
                                 </tr>
                             </thead>
                             <tbody>${portsHtml}</tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="tab-pane" id="tab-subdomains">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Subdomain</th>
+                                    <th>IP Address</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>${subdomainsHtml}</tbody>
                         </table>
                     </div>
                     
